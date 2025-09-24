@@ -5,17 +5,14 @@ import requests
 import os
 import json
 
-# Конфигурация из переменных окружения (будут заданы в GitHub Secrets)
+# Конфигурация из переменных окружения
 YANDEX_EMAIL = os.getenv('YANDEX_EMAIL')
 YANDEX_APP_PASSWORD = os.getenv('YANDEX_APP_PASSWORD')
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-
-# Критерии фильтрации писем
 TARGET_SENDER = os.getenv('TARGET_SENDER', 'guard@arbitr.ru')
 TARGET_SUBJECT_KEYWORDS = os.getenv('TARGET_SUBJECT_KEYWORDS', 'Предоставлен доступ к материалам дела').split(',')
 
-# Файл для хранения ID последнего обработанного письма
 STATE_FILE = 'email_state.json'
 
 def load_processed_state():
@@ -62,7 +59,7 @@ def check_email():
     print("🔍 Начинаем проверку почты...")
     
     try:
-        # Подключаемся к серверу
+        # Подключаемся к серверу Яндекс.Почты
         mail = imaplib.IMAP4_SSL('imap.yandex.ru')
         mail.login(YANDEX_EMAIL, YANDEX_APP_PASSWORD)
         mail.select('inbox')
@@ -97,9 +94,10 @@ def check_email():
             if status != 'OK':
                 continue
             
+            # Парсим письмо
             msg = email.message_from_bytes(msg_data[0][1])
             
-            # Декодируем тему
+            # Декодируем тему письма
             subject = "Без темы"
             if msg['Subject']:
                 subject_raw, encoding = decode_header(msg['Subject'])[0]
@@ -113,7 +111,7 @@ def check_email():
             
             print(f"📧 Проверяем письмо {email_id_str}: {subject[:50]}...")
             
-            # Проверяем критерии
+            # Проверяем критерии фильтрации
             is_target_sender = TARGET_SENDER in sender
             is_target_subject = any(keyword.lower() in subject.lower() for keyword in TARGET_SUBJECT_KEYWORDS)
             
@@ -132,39 +130,42 @@ def check_email():
                                 body_bytes = part.get_payload(decode=True)
                                 if body_bytes:
                                     body = body_bytes.decode('utf-8', errors='ignore')
-...                                 break
-...                             except Exception as e:
-...                                 print(f"⚠️ Ошибка декодирования тела письма: {e}")
-...                                 body = "Не удалось прочитать текст письма"
-...                 else:
-...                     try:
-...                         body_bytes = msg.get_payload(decode=True)
-...                         if body_bytes:
-...                             body = body_bytes.decode('utf-8', errors='ignore')
-...                     except Exception as e:
-...                         print(f"⚠️ Ошибка декодирования тела письма: {e}")
-...                         body = "Не удалось прочитать текст письма"
-...                 
-...                 # Отправляем уведомление
-...                 if send_telegram_message(subject, sender, body, email_id_str):
-...                     notifications_sent += 1
-...                 
-...                 # Помечаем как прочитанное
-...                 mail.store(email_id, '+FLAGS', '\\Seen')
-...                 
-...                 # Обновляем ID последнего обработанного письма
-...                 new_last_processed_id = email_id_str
-...         
-...         if new_last_processed_id != last_processed_id:
-...             save_processed_state(new_last_processed_id)
-...             print(f"💾 Обновлен последний обработанный ID: {new_last_processed_id}")
-...         
-...         print(f"📊 Итог: отправлено уведомлений: {notifications_sent}")
-...         
-...         mail.close()
-...         mail.logout()
-...         
-...     except Exception as e:
-...         print(f"❌ Произошла ошибка: {e}")
-... 
-... if __name__ == '__main__':
+                                break
+                            except Exception as e:
+                                print(f"⚠️ Ошибка декодирования тела письма: {e}")
+                                body = "Не удалось прочитать текст письма"
+                else:
+                    try:
+                        body_bytes = msg.get_payload(decode=True)
+                        if body_bytes:
+                            body = body_bytes.decode('utf-8', errors='ignore')
+                    except Exception as e:
+                        print(f"⚠️ Ошибка декодирования тела письма: {e}")
+                        body = "Не удалось прочитать текст письма"
+                
+                # Отправляем уведомление в Telegram
+                if send_telegram_message(subject, sender, body, email_id_str):
+                    notifications_sent += 1
+                
+                # Помечаем письмо как прочитанное
+                mail.store(email_id, '+FLAGS', '\\Seen')
+                
+                # Обновляем ID последнего обработанного письма
+                new_last_processed_id = email_id_str
+        
+        # Сохраняем состояние, если были обработаны новые письма
+        if new_last_processed_id != last_processed_id:
+            save_processed_state(new_last_processed_id)
+            print(f"💾 Обновлен последний обработанный ID: {new_last_processed_id}")
+        
+        print(f"📊 Итог: отправлено уведомлений: {notifications_sent}")
+        
+        # Закрываем соединение
+        mail.close()
+        mail.logout()
+        
+    except Exception as e:
+        print(f"❌ Произошла ошибка: {e}")
+
+if __name__ == '__main__':
+    check_email()
