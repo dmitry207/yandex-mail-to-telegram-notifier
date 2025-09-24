@@ -2,9 +2,8 @@ name: Yandex Mail to Telegram Notifier
 
 on:
   schedule:
-    # Запускается каждые 5 минут
     - cron: '*/5 * * * *'
-  workflow_dispatch:  # Позволяет запускать вручную из интерфейса GitHub
+  workflow_dispatch:
 
 jobs:
   check-email:
@@ -37,7 +36,17 @@ jobs:
       run: |
         python mail_notifier.py
         
-    - name: Commit and push if state changed
+    - name: Check if email_state.json exists
+      id: check_state
+      run: |
+        if [ -f email_state.json ]; then
+          echo "state_file_exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "state_file_exists=false" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Commit and push if state file exists and changed
+      if: steps.check_state.outputs.state_file_exists == 'true'
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
