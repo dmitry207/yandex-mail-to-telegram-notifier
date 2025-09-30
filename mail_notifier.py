@@ -8,7 +8,6 @@ import logging
 from datetime import datetime
 import re
 import quopri
-from email.encoders import decode_qprint
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -116,7 +115,6 @@ def extract_plain_text_from_html(html_text):
 def clean_telegram_text(text):
     """
     Очищает текст от символов, которые могут сломать разметку Telegram
-    и декодирует quoted-printable строки
     
     Args:
         text (str): Исходный текст
