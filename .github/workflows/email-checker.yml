@@ -2,63 +2,153 @@ name: Yandex Mail to Telegram Notifier
 
 on:
   schedule:
+    # Запускается каждые 5 минут
     - cron: '*/5 * * * *'
+  # Позволяет запускать workflow вручную из интерфейса GitHub
   workflow_dispatch:
+    inputs:
+      debug:
+        description: 'Включить режим отладки'
+        required: false
+        default: 'false'
+        type: boolean
 
+# Разрешения для workflow
 permissions:
   contents: write
 
+# Переменные для всего workflow
+env:
+  PYTHON_VERSION: '3.9'
+
 jobs:
   check-email:
+    name: Check Yandex Mail and Send Telegram Notifications
     runs-on: ubuntu-latest
     
     steps:
+    # Шаг 1: Получить код из репозитория
     - name: Checkout repository
       uses: actions/checkout@v4
-      
-    - name: Set up Python
+      with:
+        # Токен для доступа к репозиторию (для коммитов)
+        token: ${{ secrets.GITHUB_TOKEN }}
+        # Полная история для корректной работы git
+        fetch-depth: 0
+        
+    # Шаг 2: Настройка Python
+    - name: Set up Python ${{ env.PYTHON_VERSION }}
       uses: actions/setup-python@v4
       with:
-        python-version: '3.9'
+        python-version: ${{ env.PYTHON_VERSION }}
+        # Кэширование pip для ускорения последующих запусков
+        cache: 'pip'
         
+    # Шаг 3: Установка зависимостей
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        # Дополнительные зависимости для обработки email
+        pip install imapclient
         
-    - name: Debug Telegram configuration
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: |
-        echo "=== TELEGRAM CONFIGURATION ==="
-        echo "Bot Token: ${TELEGRAM_BOT_TOKEN:0:10}..."
-        echo "Chat ID: $TELEGRAM_CHAT_ID"
-        
-    - name: Test Telegram API
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: |
-        python3 -c "import os; import requests; token = os.environ['TELEGRAM_BOT_TOKEN']; chat_id = os.environ['TELEGRAM_CHAT_ID']; print('Testing Telegram...'); url = f'https://api.telegram.org/bot{token}/sendMessage'; response = requests.post(url, json={'chat_id': chat_id, 'text': 'Test from GitHub Actions'}); print(f'Status: {response.status_code}'); print(f'Response: {response.text}')"
-        
-    - name: Run email notifier
+    # Шаг 4: Проверка конфигурации (только в режиме отладки)
+    - name: Debug configuration
+      if: ${{ github.event.inputs.debug == 'true' }}
       env:
         YANDEX_EMAIL: ${{ secrets.YANDEX_EMAIL }}
-        YANDEX_APP_PASSWORD: ${{ secrets.YANDEX_APP_PASSWORD }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         TARGET_SENDER: ${{ secrets.TARGET_SENDER }}
         TARGET_SUBJECT_KEYWORDS: ${{ secrets.TARGET_SUBJECT_KEYWORDS }}
       run: |
-        python mail_notifier.py
+        echo "=== DEBUG CONFIGURATION ==="
+        echo "YANDEX_EMAIL: $YANDEX_EMAIL"
+        echo "TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:0:10}..."
+        echo "TELEGRAM_CHAT_ID: $TELEGRAM_CHAT_ID"
+        echo "TARGET_SENDER: $TARGET_SENDER"
+        echo "TARGET_SUBJECT_KEYWORDS: $TARGET_SUBJECT_KEYWORDS"
+        echo "==========================="
         
-    - name: Commit state file
+    # Шаг 5: Запуск основного скрипта
+    - name: Run email notifier
+      env:
+        # Данные для доступа к Яндекс.Почте
+        YANDEX_EMAIL: ${{ secrets.YANDEX_EMAIL }}
+        YANDEX_APP_PASSWORD: ${{ secrets.YANDEX_APP_PASSWORD }}
+        # Данные для Telegram бота
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        # Критерии фильтрации писем
+        TARGET_SENDER: ${{ secrets.TARGET_SENDER }}
+        TARGET_SUBJECT_KEYWORDS: ${{ secrets.TARGET_SUBJECT_KEYWORDS }}
+      run: |
+        echo "🕒 Запуск проверки почты..."
+        echo "Время: $(date)"
+        python mail_notifier.py
+        echo "✅ Проверка завершена"
+        
+    # Шаг 6: Сохранение состояния (если файл существует)
+    - name: Commit email state file
+      if: always()
+      env:
+        # Настройки git для коммитов
+        GIT_USER: 'GitHub Action'
+        GIT_EMAIL: 'action@github.com'
+      run: |
+        echo "📁 Проверка файла состояния..."
+        if [ -f email_state.json ]; then
+          echo "✅ Файл email_state.json найден, подготавливаем коммит..."
+          
+          # Настройка git
+          git config --local user.name "$GIT_USER"
+          git config --local user.email "$GIT_EMAIL"
+          
+          # Добавление файла в индекс
+          git add email_state.json
+          
+          # Проверка изменений и коммит если есть изменения
+          if git diff --staged --quiet; then
+            echo "ℹ️ Изменений нет, коммит не требуется"
+          else
+            echo "💾 Создание коммита с обновлением состояния..."
+            git commit -m "Update email state [skip ci]"
+            
+            echo "🚀 Отправка изменений в репозиторий..."
+            git push origin main
+            
+            echo "✅ Состояние успешно сохранено"
+          fi
+        else
+          echo "ℹ️ Файл email_state.json не найден, коммит не требуется"
+        fi
+        
+    # Шаг 7: Очистка (опционально)
+    - name: Cleanup
       if: always()
       run: |
-        if [ -f email_state.json ]; then
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add email_state.json
-          git diff --staged --quiet || (git commit -m "Update email state [skip ci]" && git push)
-        fi
+        echo "🧹 Очистка завершена"
+        echo "Время выполнения: $(date)"
+        
+  # Дополнительный job для мониторинга (можно добавить позже)
+  # monitor:
+  #   name: Health Check
+  #   runs-on: ubuntu-latest
+  #   needs: check-email
+  #   if: always()
+  #   steps:
+  #     - name: Notify health status
+  #       run: |
+  #         echo "Health check completed"
+
+# Стратегия выполнения (для будущих улучшений)
+# strategy:
+#   matrix:
+#     python-version: [3.8, 3.9, '3.10']
+
+# Оповещения при ошибках (можно добавить позже)
+# notifications:
+#   email:
+#     recipients:
+#       - your-email@example.com
+#     on_failure: always
