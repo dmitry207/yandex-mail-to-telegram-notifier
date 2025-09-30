@@ -26,35 +26,45 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         
-    - name: Debug Telegram secrets
+    - name: Debug Telegram configuration
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
-        echo "=== DEBUG TELEGRAM SETTINGS ==="
-        echo "Bot Token starts with: ${TELEGRAM_BOT_TOKEN:0:10}..."
+        echo "=== TELEGRAM CONFIGURATION ==="
+        echo "Bot Token: ${TELEGRAM_BOT_TOKEN:0:10}..."
         echo "Chat ID: $TELEGRAM_CHAT_ID"
         
-        # Test Telegram API
         python3 -c "
 import os
 import requests
-import sys
-
-token = os.getenv('TELEGRAM_BOT_TOKEN')
-chat_id = os.getenv('TELEGRAM_CHAT_ID')
-
-print(f'Testing with Chat ID: {chat_id}')
-
+token = os.environ['TELEGRAM_BOT_TOKEN']
+chat_id = os.environ['TELEGRAM_CHAT_ID']
+print(f'Testing Telegram API...')
+print(f'Using Chat ID: {chat_id}')
 url = f'https://api.telegram.org/bot{token}/sendMessage'
-payload = {
-    'chat_id': chat_id,
-    'text': 'Test from GitHub Actions'
-}
-
-response = requests.post(url, json=payload)
+response = requests.post(url, json={'chat_id': chat_id, 'text': 'Test from GitHub'})
 print(f'Status: {response.status_code}')
 print(f'Response: {response.text}')
-
-sys.exit(0 if response.status_code == 200 else 1)
-        "
+"
+        
+    - name: Run email notifier
+      env:
+        YANDEX_EMAIL: ${{ secrets.YANDEX_EMAIL }}
+        YANDEX_APP_PASSWORD: ${{ secrets.YANDEX_APP_PASSWORD }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        TARGET_SENDER: ${{ secrets.TARGET_SENDER }}
+        TARGET_SUBJECT_KEYWORDS: ${{ secrets.TARGET_SUBJECT_KEYWORDS }}
+      run: |
+        python mail_notifier.py
+        
+    - name: Commit state file
+      if: always()
+      run: |
+        if [ -f email_state.json ]; then
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add email_state.json
+          git diff --staged --quiet || (git commit -m "Update email state [skip ci]" && git push)
+        fi
