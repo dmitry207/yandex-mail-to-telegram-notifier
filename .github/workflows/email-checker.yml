@@ -1,52 +1,47 @@
-import os
-import requests
+name: Yandex Mail to Telegram Notifier
 
-print("=== ДЕБАГ SECRETS ===")
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+permissions:
+  contents: write
 
-print(f"TELEGRAM_BOT_TOKEN: {TELEGRAM_BOT_TOKEN}")
-print(f"TELEGRAM_CHAT_ID: {TELEGRAM_CHAT_ID}")
-
-if not TELEGRAM_BOT_TOKEN:
-    print("❌ TELEGRAM_BOT_TOKEN не установлен!")
+jobs:
+  check-email:
+    runs-on: ubuntu-latest
     
-if not TELEGRAM_CHAT_ID:
-    print("❌ TELEGRAM_CHAT_ID не установлен!")
-
-if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-    # Проверка бота
-    print("\n1. Проверка бота:")
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe"
-    response = requests.get(url)
-    print(f"   Статус: {response.status_code}")
-    if response.status_code == 200:
-        print("   ✅ Бот активен")
-    else:
-        print(f"   ❌ Ошибка бота: {response.text}")
-
-    # Проверка отправки с текущим Chat ID
-    print(f"\n2. Проверка отправки с Chat ID '{TELEGRAM_CHAT_ID}':")
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        'chat_id': TELEGRAM_CHAT_ID,
-        'text': "Тестовое сообщение из GitHub Actions",
-    }
-    response = requests.post(url, json=payload)
-    print(f"   Статус: {response.status_code}")
-    print(f"   Ответ: {response.text}")
-
-    if response.status_code != 200:
-        print(f"\n3. Проверка доступных чатов:")
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
-        response = requests.get(url)
-        data = response.json()
-        if data['ok'] and data['result']:
-            print("   ✅ Доступные чаты:")
-            for update in data['result']:
-                if 'message' in update:
-                    chat = update['message']['chat']
-                    print(f"      Chat ID: {chat['id']} | Тип: {chat['type']} | Имя: {chat.get('first_name', 'N/A')}")
-        else:
-            print("   ❌ Чаты не найдены")
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Debug secrets
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        python debug_secrets.py
+        
+    - name: Commit state file if it exists
+      if: always()
+      run: |
+        if [ -f email_state.json ]; then
+          echo "File email_state.json found, committing..."
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add email_state.json
+          git diff --staged --quiet || (git commit -m "Update email state [skip ci]" && git push)
+        else
+          echo "File email_state.json not found, skipping commit"
+        fi
