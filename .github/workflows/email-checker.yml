@@ -26,22 +26,35 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         
-    - name: Debug secrets
+    - name: Debug Telegram secrets
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
-        python debug_secrets.py
+        echo "=== DEBUG TELEGRAM SETTINGS ==="
+        echo "Bot Token starts with: ${TELEGRAM_BOT_TOKEN:0:10}..."
+        echo "Chat ID: $TELEGRAM_CHAT_ID"
         
-    - name: Commit state file if it exists
-      if: always()
-      run: |
-        if [ -f email_state.json ]; then
-          echo "File email_state.json found, committing..."
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add email_state.json
-          git diff --staged --quiet || (git commit -m "Update email state [skip ci]" && git push)
-        else
-          echo "File email_state.json not found, skipping commit"
-        fi
+        # Test Telegram API
+        python3 -c "
+import os
+import requests
+import sys
+
+token = os.getenv('TELEGRAM_BOT_TOKEN')
+chat_id = os.getenv('TELEGRAM_CHAT_ID')
+
+print(f'Testing with Chat ID: {chat_id}')
+
+url = f'https://api.telegram.org/bot{token}/sendMessage'
+payload = {
+    'chat_id': chat_id,
+    'text': 'Test from GitHub Actions'
+}
+
+response = requests.post(url, json=payload)
+print(f'Status: {response.status_code}')
+print(f'Response: {response.text}')
+
+sys.exit(0 if response.status_code == 200 else 1)
+        "
