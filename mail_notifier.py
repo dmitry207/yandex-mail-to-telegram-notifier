@@ -5,6 +5,47 @@ import requests
 import os
 import json
 
+print("=== DEBUG MODE ===")
+
+# Покажем значения из Secrets
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+
+print(f"TELEGRAM_BOT_TOKEN: {TELEGRAM_BOT_TOKEN}")
+print(f"TELEGRAM_CHAT_ID: {TELEGRAM_CHAT_ID}")
+
+# Простой тест Telegram
+print("Testing Telegram API...")
+url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+payload = {
+    'chat_id': TELEGRAM_CHAT_ID,
+    'text': "🔔 Тестовое сообщение из mail_notifier.py",
+}
+try:
+    response = requests.post(url, json=payload)
+    print(f"Telegram test status: {response.status_code}")
+    print(f"Telegram test response: {response.text}")
+except Exception as e:
+    print(f"Telegram test error: {e}")
+
+print("=== END DEBUG ===")
+
+# Дальше ваш обычный код...
+YANDEX_EMAIL = os.getenv('YANDEX_EMAIL')
+YANDEX_APP_PASSWORD = os.getenv('YANDEX_APP_PASSWORD')
+TARGET_SENDER = os.getenv('TARGET_SENDER', 'guard@arbitr.ru')
+TARGET_SUBJECT_KEYWORDS = os.getenv('TARGET_SUBJECT_KEYWORDS', 'Предоставлен доступ к материалам дела').split(',')
+
+STATE_FILE = 'email_state.json'
+
+# ... остальной ваш код без изменений ...
+import imaplib
+import email
+from email.header import decode_header
+import requests
+import os
+import json
+
 # Конфигурация из переменных окружения
 YANDEX_EMAIL = os.getenv('YANDEX_EMAIL')
 YANDEX_APP_PASSWORD = os.getenv('YANDEX_APP_PASSWORD')
