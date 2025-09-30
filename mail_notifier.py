@@ -6,6 +6,9 @@ import os
 import json
 import logging
 from datetime import datetime
+import re
+import quopri
+from email.encoders import decode_qprint
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -78,9 +81,42 @@ def save_processed_state(email_id):
     except Exception as e:
         log_error(f"Ошибка сохранения состояния: {e}")
 
+def decode_quoted_printable(text):
+    """
+    Декодирует quoted-printable строки
+    """
+    try:
+        # Декодируем quoted-printable
+        decoded_bytes = quopri.decodestring(text.encode('utf-8'))
+        decoded_text = decoded_bytes.decode('utf-8', errors='ignore')
+        return decoded_text
+    except:
+        return text
+
+def extract_plain_text_from_html(html_text):
+    """
+    Извлекает чистый текст из HTML, убирая все теги
+    """
+    try:
+        # Убираем HTML теги
+        clean_text = re.sub(r'<[^>]+>', '', html_text)
+        # Убираем множественные пробелы и переносы
+        clean_text = re.sub(r'\s+', ' ', clean_text)
+        # Убираем служебные HTML символы
+        clean_text = re.sub(r'&nbsp;', ' ', clean_text)
+        clean_text = re.sub(r'&amp;', '&', clean_text)
+        clean_text = re.sub(r'&lt;', '<', clean_text)
+        clean_text = re.sub(r'&gt;', '>', clean_text)
+        clean_text = re.sub(r'&quot;', '"', clean_text)
+        clean_text = clean_text.strip()
+        return clean_text
+    except:
+        return html_text
+
 def clean_telegram_text(text):
     """
     Очищает текст от символов, которые могут сломать разметку Telegram
+    и декодирует quoted-printable строки
     
     Args:
         text (str): Исходный текст
@@ -91,32 +127,68 @@ def clean_telegram_text(text):
     if not text:
         return ""
     
+    # Декодируем quoted-printable строки (например, =D0=9C=D0=BE=D0=B9)
+    cleaned_text = decode_quoted_printable(text)
+    
+    # Убираем HTML теги если они есть
+    if '<' in cleaned_text and '>' in cleaned_text:
+        cleaned_text = extract_plain_text_from_html(cleaned_text)
+    
     # Заменяем проблемные символы Markdown на безопасные аналоги
     replacements = {
-        '*': '∗',
-        '_': '＿',
-        '`': '´',
-        '[': '⟦',
-        ']': '⟧',
-        '(': '⦅',
-        ')': '⦆',
-        '~': '∼',
-        '#': '♯',
-        '+': '⊕',
-        '-': '−',
-        '=': '≐',
-        '|': '∣',
-        '{': '⦃',
-        '}': '⦄',
+        '*': '•',
+        '_': '—',
+        '`': "'",
+        '[': '(',
+        ']': ')',
+        '~': '≈',
+        '#': '№',
+        '=': '═',
+        '|': '│',
+        '{': '❴',
+        '}': '❵',
         '>': '›',
-        '<': '‹'
+        '<': '‹',
+        '?': '？',
+        '&': 'и',
+        ';': ',',
+        ':': 'ː',
+        '!': '❗'
     }
     
-    cleaned_text = text
     for old, new in replacements.items():
         cleaned_text = cleaned_text.replace(old, new)
     
+    # Убираем множественные пробелы и переносы
+    cleaned_text = re.sub(r'\s+', ' ', cleaned_text)
+    cleaned_text = cleaned_text.strip()
+    
     return cleaned_text
+
+def decode_email_header(header):
+    """
+    Декодирует email заголовок с учетом кодировки
+    """
+    if not header:
+        return ""
+    
+    try:
+        decoded_parts = decode_header(header)
+        decoded_text = ""
+        
+        for part, encoding in decoded_parts:
+            if isinstance(part, bytes):
+                if encoding:
+                    decoded_text += part.decode(encoding, errors='ignore')
+                else:
+                    decoded_text += part.decode('utf-8', errors='ignore')
+            else:
+                decoded_text += str(part)
+        
+        return clean_telegram_text(decoded_text)
+    except Exception as e:
+        log_warning(f"Ошибка декодирования заголовка: {e}")
+        return clean_telegram_text(str(header))
 
 def send_telegram_message(subject, sender, body_preview, email_id):
     """
@@ -134,10 +206,14 @@ def send_telegram_message(subject, sender, body_preview, email_id):
     log_info("Отправка уведомления в Telegram...")
     
     try:
-        # Очищаем текст от проблемных символов
-        subject_clean = clean_telegram_text(subject)
-        sender_clean = clean_telegram_text(sender)
+        # Очищаем и декодируем текст
+        subject_clean = decode_email_header(subject)
+        sender_clean = decode_email_header(sender)
         body_clean = clean_telegram_text(body_preview)
+        
+        # Обрезаем слишком длинный текст
+        if len(body_clean) > 150:
+            body_clean = body_clean[:147] + "..."
         
         # Формируем сообщение
         message = (
@@ -145,7 +221,7 @@ def send_telegram_message(subject, sender, body_preview, email_id):
             f"📩 ОТ: {sender_clean}\n"
             f"📋 ТЕМА: {subject_clean}\n"
             f"🔔 СТАТУС: Предоставлен доступ к материалам дела\n"
-            f"📖 ОТРЫВОК: {body_clean[:150]}...\n\n"
+            f"📖 ОТРЫВОК: {body_clean}\n\n"
             f"📧 ID ПИСЬМА: {email_id}\n"
             f"🕒 ВРЕМЯ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
@@ -153,9 +229,8 @@ def send_telegram_message(subject, sender, body_preview, email_id):
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             'chat_id': TELEGRAM_CHAT_ID,
-            'text': message,
-            # Используем HTML разметку вместо Markdown для большей стабильности
-            'parse_mode': 'HTML'
+            'text': message
+            # Не используем parse_mode для избежания проблем с разметкой
         }
         
         response = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
@@ -180,13 +255,13 @@ def send_telegram_message(subject, sender, body_preview, email_id):
 
 def extract_email_body(msg):
     """
-    Извлекает текстовое тело из email сообщения
+    Извлекает текстовое тело из email сообщения, убирая HTML теги
     
     Args:
         msg: Email сообщение
         
     Returns:
-        str: Текст письма
+        str: Текст письма без HTML разметки
     """
     body = ""
     
@@ -207,12 +282,30 @@ def extract_email_body(msg):
                     except Exception as e:
                         log_warning(f"Ошибка декодирования части письма: {e}")
                         continue
+                
+                # Если текстовой версии нет, используем HTML но убираем теги
+                if content_type == 'text/html' and not body and 'attachment' not in content_disposition:
+                    try:
+                        body_bytes = part.get_payload(decode=True)
+                        if body_bytes:
+                            html_body = body_bytes.decode('utf-8', errors='ignore')
+                            # Убираем HTML теги и получаем чистый текст
+                            body = extract_plain_text_from_html(html_body)
+                            break
+                    except Exception as e:
+                        log_warning(f"Ошибка декодирования HTML части: {e}")
+                        continue
         else:
             # Обрабатываем простое сообщение
             try:
                 body_bytes = msg.get_payload(decode=True)
                 if body_bytes:
-                    body = body_bytes.decode('utf-8', errors='ignore')
+                    body_content = body_bytes.decode('utf-8', errors='ignore')
+                    # Если это HTML, убираем теги
+                    if msg.get_content_type() == 'text/html':
+                        body = extract_plain_text_from_html(body_content)
+                    else:
+                        body = body_content
             except Exception as e:
                 log_warning(f"Ошибка декодирования письма: {e}")
         
@@ -288,20 +381,12 @@ def process_email_message(mail, email_id, last_processed_id):
         return last_processed_id, False
     
     # Извлекаем тему
-    subject = "Без темы"
-    if msg['Subject']:
-        try:
-            subject_raw, encoding = decode_header(msg['Subject'])[0]
-            if isinstance(subject_raw, bytes):
-                subject = subject_raw.decode(encoding if encoding else 'utf-8', errors='ignore')
-            else:
-                subject = str(subject_raw)
-        except Exception as e:
-            log_warning(f"Ошибка декодирования темы: {e}")
-            subject = "Ошибка декодирования темы"
+    subject = msg.get('Subject', 'Без темы')
+    subject = decode_email_header(subject)
     
     # Извлекаем отправителя
     sender = msg.get('From', 'Неизвестный отправитель')
+    sender = decode_email_header(sender)
     
     log_info(f"Тема: {subject}")
     log_info(f"Отправитель: {sender}")
