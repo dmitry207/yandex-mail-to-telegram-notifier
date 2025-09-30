@@ -5,6 +5,9 @@ on:
     - cron: '*/5 * * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   check-email:
     runs-on: ubuntu-latest
@@ -36,19 +39,14 @@ jobs:
       run: |
         python mail_notifier.py
         
-    - name: Check if email_state.json exists
-      id: check_state
+    - name: Commit state file if exists
+      if: always()
       run: |
         if [ -f email_state.json ]; then
-          echo "state_file_exists=true" >> $GITHUB_OUTPUT
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add email_state.json
+          git diff --staged --quiet || (git commit -m "Update email state [skip ci]" && git push)
         else
-          echo "state_file_exists=false" >> $GITHUB_OUTPUT
+          echo "email_state.json not found, skipping commit"
         fi
-        
-    - name: Commit and push if state file exists and changed
-      if: steps.check_state.outputs.state_file_exists == 'true'
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add email_state.json
-        git diff --staged --quiet || (git commit -m "Update email state [skip ci]" && git push)
