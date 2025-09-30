@@ -15,8 +15,12 @@ TARGET_SUBJECT_KEYWORDS = os.getenv('TARGET_SUBJECT_KEYWORDS', 'Предоста
 
 STATE_FILE = 'email_state.json'
 
+print("=== НАСТРОЙКИ СКРИПТА ===")
+print(f"YANDEX_EMAIL: {YANDEX_EMAIL}")
+print(f"TARGET_SENDER: {TARGET_SENDER}")
+print(f"TARGET_SUBJECT_KEYWORDS: {TARGET_SUBJECT_KEYWORDS}")
+
 def load_processed_state():
-    """Загружает ID последнего обработанного письма"""
     try:
         with open(STATE_FILE, 'r') as f:
             state = json.load(f)
@@ -25,12 +29,12 @@ def load_processed_state():
         return None
 
 def save_processed_state(email_id):
-    """Сохраняет ID обработанного письма"""
     with open(STATE_FILE, 'w') as f:
         json.dump({'last_processed_id': email_id}, f)
 
 def send_telegram_message(subject, sender, body_preview, email_id):
-    """Отправляет сообщение в Telegram"""
+    print("🟡 ОТПРАВКА В TELEGRAM...")
+    
     message = f"⚖️ **Новое уведомление от арбитражного суда**\n\n" \
               f"📩 **От:** {sender}\n" \
               f"📋 **Тема:** {subject}\n" \
@@ -46,31 +50,32 @@ def send_telegram_message(subject, sender, body_preview, email_id):
     }
     
     try:
-        response = requests.post(url, json=payload)
-        response.raise_for_status()
-        print("✅ Уведомление отправлено в Telegram")
+        response = requests.post(url, json=payload, timeout=10)
+        print(f"✅ УВЕДОМЛЕНИЕ ОТПРАВЛЕНО! Статус: {response.status_code}")
         return True
     except Exception as e:
         print(f"❌ Ошибка отправки в Telegram: {e}")
         return False
 
 def check_email():
-    """Основная функция проверки почты"""
-    print("🔍 Начинаем проверку почты...")
+    print("\n=== НАЧАЛО ПРОВЕРКИ ПОЧТЫ ===")
     
     try:
-        # Подключаемся к серверу Яндекс.Почты
+        # Подключаемся к почте
         mail = imaplib.IMAP4_SSL('imap.yandex.ru')
         mail.login(YANDEX_EMAIL, YANDEX_APP_PASSWORD)
         mail.select('inbox')
+        print("✅ Подключение к почте успешно")
         
         # Ищем непрочитанные письма
         status, messages = mail.search(None, 'UNSEEN')
+        
         if status != 'OK':
             print("ℹ️ Нет новых писем")
             return
         
         email_ids = messages[0].split()
+        
         if not email_ids:
             print("ℹ️ Нет непрочитанных писем")
             return
@@ -81,23 +86,26 @@ def check_email():
         new_last_processed_id = last_processed_id
         notifications_sent = 0
         
-        # Обрабатываем письма в порядке от старых к новым
+        # Обрабатываем каждое письмо
         for email_id in email_ids:
             email_id_str = email_id.decode()
+            print(f"\n--- ОБРАБОТКА ПИСЬМА ID: {email_id_str} ---")
             
-            # Пропускаем письма, которые уже обрабатывались
+            # Пропускаем уже обработанные
             if last_processed_id and int(email_id_str) <= int(last_processed_id):
+                print("↪️ Письмо уже обработано, пропускаем")
                 continue
             
             # Получаем письмо
             status, msg_data = mail.fetch(email_id, '(RFC822)')
             if status != 'OK':
+                print("❌ Ошибка получения письма")
                 continue
             
             # Парсим письмо
             msg = email.message_from_bytes(msg_data[0][1])
             
-            # Декодируем тему письма
+            # Извлекаем тему
             subject = "Без темы"
             if msg['Subject']:
                 subject_raw, encoding = decode_header(msg['Subject'])[0]
@@ -106,19 +114,37 @@ def check_email():
                 else:
                     subject = subject_raw
             
-            # Получаем отправителя
+            # Извлекаем отправителя
             sender = msg['From'] or "Неизвестный отправитель"
             
-            print(f"📧 Проверяем письмо {email_id_str}: {subject[:50]}...")
+            print(f"📧 Тема: {subject}")
+            print(f"📩 Отправитель: {sender}")
             
-            # Проверяем критерии фильтрации
+            # ДЕТАЛЬНАЯ ПРОВЕРКА ФИЛЬТРАЦИИ
+            print(f"\n🔍 ПРОВЕРКА ФИЛЬТРОВ:")
+            print(f"   Ищем отправителя: '{TARGET_SENDER}'")
+            print(f"   В отправителе: '{sender}'")
+            
             is_target_sender = TARGET_SENDER in sender
-            is_target_subject = any(keyword.lower() in subject.lower() for keyword in TARGET_SUBJECT_KEYWORDS)
+            print(f"   Результат проверки отправителя: {is_target_sender}")
             
+            print(f"   Ищем ключевые слова: {TARGET_SUBJECT_KEYWORDS}")
+            print(f"   В теме: '{subject}'")
+            
+            is_target_subject = False
+            for keyword in TARGET_SUBJECT_KEYWORDS:
+                keyword_found = keyword.lower() in subject.lower()
+                print(f"   Ключевое слово '{keyword}': {keyword_found}")
+                if keyword_found:
+                    is_target_subject = True
+            
+            print(f"   Результат проверки темы: {is_target_subject}")
+            
+            # ФИНАЛЬНОЕ РЕШЕНИЕ
             if is_target_sender and is_target_subject:
-                print(f"✅ Найдено подходящее письмо! ID: {email_id_str}")
+                print("🎯 ПИСЬМО ПОДХОДИТ! Отправляем уведомление...")
                 
-                # Извлекаем текст письма
+                # Извлекаем тело письма
                 body = ""
                 if msg.is_multipart():
                     for part in msg.walk():
@@ -132,7 +158,6 @@ def check_email():
                                     body = body_bytes.decode('utf-8', errors='ignore')
                                 break
                             except Exception as e:
-                                print(f"⚠️ Ошибка декодирования тела письма: {e}")
                                 body = "Не удалось прочитать текст письма"
                 else:
                     try:
@@ -140,32 +165,40 @@ def check_email():
                         if body_bytes:
                             body = body_bytes.decode('utf-8', errors='ignore')
                     except Exception as e:
-                        print(f"⚠️ Ошибка декодирования тела письма: {e}")
                         body = "Не удалось прочитать текст письма"
                 
-                # Отправляем уведомление в Telegram
+                # Отправляем уведомление
                 if send_telegram_message(subject, sender, body, email_id_str):
                     notifications_sent += 1
+                    print("✅ УВЕДОМЛЕНИЕ УСПЕШНО ОТПРАВЛЕНО!")
+                else:
+                    print("❌ ОШИБКА ОТПРАВКИ УВЕДОМЛЕНИЯ")
                 
-                # Помечаем письмо как прочитанное
+                # Помечаем как прочитанное
                 mail.store(email_id, '+FLAGS', '\\Seen')
-                
-                # Обновляем ID последнего обработанного письма
                 new_last_processed_id = email_id_str
+            else:
+                print("❌ Письмо НЕ ПОДХОДИТ под фильтры")
+                if not is_target_sender:
+                    print("   ⚠️ Причина: не подходит отправитель")
+                if not is_target_subject:
+                    print("   ⚠️ Причина: не подходит тема")
         
-        # Сохраняем состояние, если были обработаны новые письма
+        # Сохраняем состояние
         if new_last_processed_id != last_processed_id:
             save_processed_state(new_last_processed_id)
             print(f"💾 Обновлен последний обработанный ID: {new_last_processed_id}")
         
-        print(f"📊 Итог: отправлено уведомлений: {notifications_sent}")
+        print(f"\n=== ИТОГ ===")
+        print(f"📊 Отправлено уведомлений: {notifications_sent}")
         
-        # Закрываем соединение
         mail.close()
         mail.logout()
         
     except Exception as e:
-        print(f"❌ Произошла ошибка: {e}")
+        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        import traceback
+        print(f"🔧 Детали ошибки:\n{traceback.format_exc()}")
 
 if __name__ == '__main__':
     check_email()
