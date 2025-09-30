@@ -188,13 +188,74 @@ def decode_email_header(header):
         log_warning(f"Ошибка декодирования заголовка: {e}")
         return clean_telegram_text(str(header))
 
-def send_telegram_message(subject, sender, body_preview, email_id):
+def extract_email_from_sender(sender_raw):
+    """
+    Извлекает email адрес из строки отправителя
+    """
+    try:
+        # Ищем email в формате <email@domain.com>
+        email_match = re.search(r'<([^>]+)>', sender_raw)
+        if email_match:
+            return email_match.group(1)
+        
+        # Ищем email без угловых скобок
+        email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', sender_raw)
+        if email_match:
+            return email_match.group(0)
+        
+        return sender_raw
+    except:
+        return sender_raw
+
+def check_email_criteria(subject, sender_raw):
+    """
+    Проверяет письмо на соответствие критериям фильтрации
+    
+    Args:
+        subject (str): Тема письма
+        sender_raw (str): Исходная строка отправителя
+        
+    Returns:
+        bool: True если письмо подходит под критерии
+    """
+    # Извлекаем email из отправителя
+    sender_email = extract_email_from_sender(sender_raw)
+    
+    # Расширенная проверка отправителя
+    is_target_sender = False
+    
+    # Проверяем разные варианты отображения отправителя
+    sender_checks = [
+        TARGET_SENDER.lower() in sender_raw.lower(),           # Прямое вхождение в оригинальную строку
+        TARGET_SENDER.lower() in sender_email.lower(),         # Прямое вхождение в извлеченный email
+        'arbitr.ru' in sender_raw.lower(),                     # Домен arbitr.ru в оригинальной строке
+        'arbitr.ru' in sender_email.lower(),                   # Домен arbitr.ru в извлеченном email
+        'арбитр' in sender_raw.lower(),                        # Слово "арбитр" в оригинальной строке
+        'арбитр' in sender_email.lower()                       # Слово "арбитр" в извлеченном email
+    ]
+    
+    is_target_sender = any(sender_checks)
+    
+    # Проверяем тему на наличие ключевых слов
+    is_target_subject = any(
+        keyword.lower() in subject.lower() 
+        for keyword in TARGET_SUBJECT_KEYWORDS 
+        if keyword.strip()
+    )
+    
+    log_info(f"Отправитель оригинальный: {sender_raw}")
+    log_info(f"Отправитель извлеченный: {sender_email}")
+    log_info(f"Критерии проверки: отправитель={is_target_sender}, тема={is_target_subject}")
+    
+    return is_target_sender and is_target_subject
+
+def send_telegram_message(subject, sender_clean, body_preview, email_id):
     """
     Отправляет сообщение в Telegram
     
     Args:
         subject (str): Тема письма
-        sender (str): Отправитель письма
+        sender_clean (str): Очищенный отправитель письма
         body_preview (str): Преview текста письма
         email_id (str): ID письма
         
@@ -206,7 +267,6 @@ def send_telegram_message(subject, sender, body_preview, email_id):
     try:
         # Очищаем и декодируем текст
         subject_clean = decode_email_header(subject)
-        sender_clean = decode_email_header(sender)
         body_clean = clean_telegram_text(body_preview)
         
         # Обрезаем слишком длинный текст
@@ -317,30 +377,6 @@ def extract_email_body(msg):
         log_error(f"Ошибка извлечения тела письма: {e}")
         return "Ошибка чтения текста письма"
 
-def check_email_criteria(subject, sender):
-    """
-    Проверяет письмо на соответствие критериям фильтрации
-    
-    Args:
-        subject (str): Тема письма
-        sender (str): Отправитель письма
-        
-    Returns:
-        bool: True если письмо подходит под критерии
-    """
-    # Проверяем отправителя
-    is_target_sender = TARGET_SENDER.lower() in sender.lower()
-    
-    # Проверяем тему на наличие ключевых слов
-    is_target_subject = any(
-        keyword.lower() in subject.lower() 
-        for keyword in TARGET_SUBJECT_KEYWORDS 
-        if keyword.strip()
-    )
-    
-    log_info(f"Критерии проверки: отправитель={is_target_sender}, тема={is_target_subject}")
-    return is_target_sender and is_target_subject
-
 def process_email_message(mail, email_id, last_processed_id):
     """
     Обрабатывает одно email сообщение
@@ -379,18 +415,18 @@ def process_email_message(mail, email_id, last_processed_id):
         return last_processed_id, False
     
     # Извлекаем тему
-    subject = msg.get('Subject', 'Без темы')
-    subject = decode_email_header(subject)
+    subject_raw = msg.get('Subject', 'Без темы')
+    subject_clean = decode_email_header(subject_raw)
     
     # Извлекаем отправителя
-    sender = msg.get('From', 'Неизвестный отправитель')
-    sender = decode_email_header(sender)
+    sender_raw = msg.get('From', 'Неизвестный отправитель')
+    sender_clean = decode_email_header(sender_raw)
     
-    log_info(f"Тема: {subject}")
-    log_info(f"Отправитель: {sender}")
+    log_info(f"Тема: {subject_clean}")
+    log_info(f"Отправитель (очищенный): {sender_clean}")
     
-    # Проверяем критерии
-    if not check_email_criteria(subject, sender):
+    # Проверяем критерии на оригинальном отправителе
+    if not check_email_criteria(subject_clean, sender_raw):
         log_info("Письмо не подходит под критерии фильтрации")
         return last_processed_id, False
     
@@ -402,7 +438,7 @@ def process_email_message(mail, email_id, last_processed_id):
     
     # Отправляем уведомление в Telegram
     notification_sent = False
-    if send_telegram_message(subject, sender, body, email_id_str):
+    if send_telegram_message(subject_clean, sender_clean, body, email_id_str):
         notification_sent = True
         log_success("Уведомление обработано успешно")
     else:
