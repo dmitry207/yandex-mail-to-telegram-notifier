@@ -35,18 +35,12 @@ jobs:
         echo "Bot Token: ${TELEGRAM_BOT_TOKEN:0:10}..."
         echo "Chat ID: $TELEGRAM_CHAT_ID"
         
-        python3 -c "
-import os
-import requests
-token = os.environ['TELEGRAM_BOT_TOKEN']
-chat_id = os.environ['TELEGRAM_CHAT_ID']
-print(f'Testing Telegram API...')
-print(f'Using Chat ID: {chat_id}')
-url = f'https://api.telegram.org/bot{token}/sendMessage'
-response = requests.post(url, json={'chat_id': chat_id, 'text': 'Test from GitHub'})
-print(f'Status: {response.status_code}')
-print(f'Response: {response.text}')
-"
+    - name: Test Telegram API
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        python3 -c "import os; import requests; token = os.environ['TELEGRAM_BOT_TOKEN']; chat_id = os.environ['TELEGRAM_CHAT_ID']; print('Testing Telegram...'); url = f'https://api.telegram.org/bot{token}/sendMessage'; response = requests.post(url, json={'chat_id': chat_id, 'text': 'Test from GitHub Actions'}); print(f'Status: {response.status_code}'); print(f'Response: {response.text}')"
         
     - name: Run email notifier
       env:
